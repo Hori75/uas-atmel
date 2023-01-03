@@ -27,15 +27,13 @@
 #define USART_SERIAL_PARITY              USART_PMODE_DISABLED_gc
 #define USART_SERIAL_STOP_BIT            false
 
-static char reads[5];
+static char reads[32];
 
 char *close = "CLOSE";
 
 /* Define a task */
 static portTASK_FUNCTION_PROTO(vTimeCount, p_);
-static portTASK_FUNCTION_PROTO(vButtonInput, q_);
-static portTASK_FUNCTION_PROTO(vSensor, r_);
-static portTASK_FUNCTION_PROTO(vMessager, s_);
+static portTASK_FUNCTION_PROTO(vIdle, r_);
 
 // Traffic
 char* state_enum_to_string(int state);
@@ -166,7 +164,7 @@ void receiveString()
 		else reads[i++] = inp;
 		if (i > 4) break;
 	}
-	if(strcmp(close,reads) == 0 && alarmAck == 0){
+	if(strcmp(close,reads) == 0 && currState != RED_INTERRUPT_STATE){
 		currState = RED_INTERRUPT_STATE;
 		alarmAck = 1;
 		countdown = state_countdown(currState);
@@ -213,11 +211,8 @@ int main (void)
 	}
 
 	/* Create the task */
-	
-	xTaskCreate(vMessager, "", 1000, NULL, tskIDLE_PRIORITY + 3 , NULL);
-	xTaskCreate(vButtonInput, "", 1000, NULL, tskIDLE_PRIORITY + 2 , NULL);
-	xTaskCreate(vSensor, "", 1000, NULL, tskIDLE_PRIORITY + 1 , NULL);
-	xTaskCreate(vTimeCount, "", 1000, NULL, tskIDLE_PRIORITY, NULL);
+	xTaskCreate(vTimeCount, "", 1000, NULL, tskIDLE_PRIORITY + 1, NULL);
+	xTaskCreate(vIdle, "", 1000, NULL, tskIDLE_PRIORITY , NULL);
 	
 	/* Semaphore */
 	xSemaphore = xSemaphoreCreateBinary();
@@ -237,8 +232,6 @@ static portTASK_FUNCTION(vTimeCount, p_) {
 				currState = next_state(currState);
 				countdown = state_countdown(currState);
 				PORTA.OUT = state_output(currState);
-				alarmAck = 0;
-				update_LCD();
 				xSemaphoreGive(xSemaphore);
 			}
 		}
@@ -246,22 +239,7 @@ static portTASK_FUNCTION(vTimeCount, p_) {
 	}
 }
 
-static portTASK_FUNCTION(vButtonInput, q_) {
-	while (1) {
-		if(ioport_get_pin_level(GPIO_PUSH_BUTTON_1)==0){
-			if(xSemaphoreTake(xSemaphore, (TickType_t) 10) == pdTRUE) {
-				currState = RED_INTERRUPT_STATE;
-				countdown = state_countdown(currState);
-				PORTA.OUT = state_output(currState);
-				update_LCD();
-				xSemaphoreGive(xSemaphore);
-			}
-		}
-		vTaskDelay(10/portTICK_PERIOD_MS);
-	}
-}
-
-static portTASK_FUNCTION(vSensor, r_) {
+static portTASK_FUNCTION(vIdle, r_) {
 	int distanceCount = 0;
 	
 	while (1) {
@@ -292,20 +270,17 @@ static portTASK_FUNCTION(vSensor, r_) {
 				PORTA.OUT = state_output(currState);
 			}
 			
+			receiveString();			
 			update_LCD();
+			
+			if(ioport_get_pin_level(GPIO_PUSH_BUTTON_1)==0 && currState != RED_INTERRUPT_STATE){
+				currState = RED_INTERRUPT_STATE;
+				countdown = state_countdown(currState);
+				PORTA.OUT = state_output(currState);
+				alarmAck = 0;
+			}
 			xSemaphoreGive(xSemaphore);
 		}		
-		vTaskDelay(10/portTICK_PERIOD_MS);
-	}
-}
-
-static portTASK_FUNCTION(vMessager, s_) {
-	while(1){
-		if(xSemaphoreTake(xSemaphore, (TickType_t) 10) == pdTRUE) {
-			receiveString();
-			update_LCD();
-			xSemaphoreGive(xSemaphore);
-		}
 		vTaskDelay(10/portTICK_PERIOD_MS);
 	}
 }
